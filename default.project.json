@@ -1,7 +1,6 @@
 {
   "name": "JestLua",
   "tree": {
-    "$path": "roblox-model",
     "Jest": {
       "$path": "DevPackages"
     }
