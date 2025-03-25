@@ -1,8 +1,6 @@
 {
-  "name": "JestLua",
+  "name": "jest-lua",
   "tree": {
-    "Jest": {
-      "$path": "DevPackages"
-    }
+    "$path": "DevPackages"
   }
 }
