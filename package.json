@@ -3,7 +3,7 @@
   "version": "3.10.0-quenty.1",
   "description": "Fork of jest-lua for npm consumption",
   "files": [
-    "src",
+    "DevPackages",
     "default.project.json"
   ],
   "scripts": {},
