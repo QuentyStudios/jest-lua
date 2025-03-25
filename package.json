@@ -1,23 +1,33 @@
 {
-  "name": "workspace",
-  "private": true,
-  "workspaces": [
-    "src/*"
+  "name": "@quentystudios/jest-lua",
+  "version": "3.10.0-quenty.0",
+  "description": "Fork of jest-lua for npm consumption",
+  "files": [
+    "Packages",
+    "WorkspaceStatic",
+    "bin",
+    "roblox-model",
+    "scripts",
+    "src",
+    "default.project.json",
+    "jest.config.lua",
+    "jest.project.json",
+    "test-place.project.json"
   ],
-  "scripts": {
-    "prepare": "npmluau",
-    "build-assets": "sh ./scripts/build-assets.sh",
-    "lint": "selene src",
-    "format": "stylua src",
-    "style-check": "stylua src --check",
-    "test:roblox": "sh ./scripts/test-roblox.sh",
-    "verify-pack": "yarn workspaces foreach -A --no-private pack --dry-run",
-    "clean": "rm -rf roblox build node_modules",
-    "test": "sh ./scripts/test-roblox.sh"
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quentystudios/jest-lua.git"
   },
-  "devDependencies": {
-    "commander": "^11.1.0",
-    "npmluau": "^0.1.1"
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/quentystudios/jest-lua/issues"
   },
-  "packageManager": "yarn@4.0.2"
+  "homepage": "https://github.com/quentystudios/jest-lua#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }
