@@ -1,1 +1,1 @@
-return require(script.Parent.Jest)
+return require(script.Jest)
