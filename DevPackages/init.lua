@@ -1,5 +1,5 @@
 local Jest = require(script.Jest)
 
-Jest.Globals = script.JestGlobals
+Jest.Globals = require(script.JestGlobals)
 
 return Jest
