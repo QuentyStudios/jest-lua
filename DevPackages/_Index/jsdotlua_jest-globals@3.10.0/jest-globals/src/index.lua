@@ -27,17 +27,17 @@ type JestGlobals =
 	{
 		jest: Jest,
 		expect: typeof(importedExpect),
-		expectExtended: ExpectExtended<{ [string]: (...any) -> nil }>	
+		expectExtended: ExpectExtended<{ [string]: (...any) -> nil }>
 }
 	-- ROBLOX deviation START: using TestFrameworkGlobals instead of declaring variables one by one
 	& TestFrameworkGlobals
 -- ROBLOX deviation END
 
-error(Error.new(
-[[Do not import `JestGlobals` outside of the Jest 3 test environment.
-Tip: Jest 2 uses a different pattern - check your Jest version.]]	-- ROBLOX deviation END
+-- error(Error.new(
+-- [[Do not import `JestGlobals` outside of the Jest 3 test environment.
+-- Tip: Jest 2 uses a different pattern - check your Jest version.]]	-- ROBLOX deviation END
 
 
-))
+-- ))
 
 return ({} :: any) :: JestGlobals
