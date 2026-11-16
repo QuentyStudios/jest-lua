@@ -141,6 +141,113 @@ describe("task.delay", function()
 		jest.advanceTimersByTime(10000)
 		expect(triggered).toBe(true)
 	end, 1000)
+
+	test("should return the thread the callback runs on", function()
+		local callbackThread
+		local thread = task.delay(1, function()
+			callbackThread = coroutine.running()
+		end)
+		expect(typeof(thread)).toBe("thread")
+		jest.advanceTimersByTime(1000)
+		expect(callbackThread).toBe(thread)
+		expect(callbackThread).never.toBe(coroutine.running())
+	end)
+
+	test("should pass arguments to the callback", function()
+		local count, a, b, c
+		task.delay(1, function(...)
+			count = select("#", ...)
+			a, b, c = ...
+		end, 1, nil, 3)
+		jest.advanceTimersByTime(1000)
+		expect(count).toBe(3)
+		expect(a).toBe(1)
+		expect(b).toBe(nil)
+		expect(c).toBe(3)
+	end)
+
+	test("should accept a thread", function()
+		local received
+		local thread = coroutine.create(function(value)
+			received = value
+		end)
+		expect(task.delay(1, thread, "value")).toBe(thread)
+		jest.advanceTimersByTime(1000)
+		expect(received).toBe("value")
+	end)
+
+	test("should not suspend the test when the callback yields", function()
+		local count = 0
+		task.delay(0, function()
+			while true do
+				count += 1
+				task.wait(0.05)
+			end
+		end)
+
+		jest.advanceTimersByTime(100)
+		expect(count).toBe(3)
+		jest.advanceTimersByTime(50)
+		expect(count).toBe(4)
+		jest.runOnlyPendingTimers()
+		expect(count).toBe(5)
+		jest.advanceTimersToNextTimer()
+		expect(count).toBe(6)
+	end)
+
+	test("should rethrow errors raised by the callback", function()
+		local triggered = false
+		task.delay(1, function()
+			error("callback error")
+		end)
+		task.delay(2, function()
+			triggered = true
+		end)
+
+		expect(function()
+			jest.advanceTimersByTime(2000)
+		end).toThrow("callback error")
+		expect(triggered).toBe(false)
+
+		jest.advanceTimersByTime(2000)
+		expect(triggered).toBe(true)
+	end)
+
+	test("should include the callback's stack trace in rethrown errors", function()
+		task.delay(1, function()
+			error("callback error")
+		end)
+
+		local success, err = pcall(jest.advanceTimersByTime, 1000)
+		expect(success).toBe(false)
+
+		local message, stackTrace = string.match(err, "^(.-)\n(.+)$")
+		expect(message).toContain("callback error")
+		expect(stackTrace).never.toBeNil()
+	end)
+
+	test("should abort a callback that never stops waiting", function()
+		task.delay(0, function()
+			while true do
+				task.wait()
+			end
+		end)
+
+		expect(function()
+			jest.advanceTimersByTime(100)
+		end).toThrow("Aborting after running 100000 timers, assuming an infinite loop!")
+	end)
+
+	test("should abort runAllTimers when timers keep rescheduling", function()
+		local function reschedule()
+			task.delay(1, reschedule)
+		end
+		task.delay(1, reschedule)
+
+		expect(function()
+			jest.runAllTimers()
+		end).toThrow("Aborting after running 100000 timers, assuming an infinite loop!")
+	end)
 end)
 
 describe("task.cancel", function()
@@ -186,6 +293,77 @@ describe("task.cancel", function()
 		jest.advanceTimersByTime(2000)
 		task.cancel(timeout)
 		expect(triggered).toBe(true)
+	end)
+
+	test("should cancel a thread waiting in task.wait", function()
+		local count = 0
+		local thread = task.spawn(function()
+			while true do
+				task.wait(1)
+				count += 1
+			end
+		end)
+
+		jest.advanceTimersByTime(1000)
+		expect(count).toBe(1)
+
+		task.cancel(thread)
+		expect(coroutine.status(thread)).toBe("dead")
+		expect(jest.getTimerCount()).toBe(0)
+
+		jest.advanceTimersByTime(5000)
+		expect(count).toBe(1)
+	end)
+
+	test("should cancel a delayed thread while it is waiting", function()
+		local count = 0
+		local thread = task.delay(0, function()
+			while true do
+				task.wait(1)
+				count += 1
+			end
+		end)
+
+		jest.advanceTimersByTime(1000)
+		expect(count).toBe(1)
+
+		task.cancel(thread)
+		jest.advanceTimersByTime(5000)
+		expect(count).toBe(1)
+		expect(jest.getTimerCount()).toBe(0)
+	end)
+
+	test("should cancel a timer from another timer due at the same time", function()
+		local triggered2 = false
+		local triggered3 = false
+		local timeout2
+		task.delay(1, function()
+			task.cancel(timeout2)
+		end)
+		timeout2 = task.delay(1, function()
+			triggered2 = true
+		end)
+		task.delay(1, function()
+			triggered3 = true
+		end)
+
+		jest.advanceTimersByTime(1000)
+		expect(triggered2).toBe(false)
+		expect(triggered3).toBe(true)
+	end)
+
+	test("should skip timers cancelled during runOnlyPendingTimers", function()
+		local triggered = false
+		local timeout2
+		task.delay(1, function()
+			task.cancel(timeout2)
+		end)
+		timeout2 = task.delay(2, function()
+			triggered = true
+		end)
+
+		jest.runOnlyPendingTimers()
+		expect(triggered).toBe(false)
 	end)
 end)
 

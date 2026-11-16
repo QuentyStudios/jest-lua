@@ -33,11 +33,13 @@ type JestGlobals =
 	& TestFrameworkGlobals
 -- ROBLOX deviation END
 
-error(Error.new(
-	-- ROBLOX deviation START: aligned message to make sense for jest-roblox
-	"Do not import `JestGlobals` outside of the Jest 3 test environment.\n"
-		.. "Tip: Jest 2 uses a different pattern - check your Jest version."
-	-- ROBLOX deviation END
-))
+-- quentystudios deviation: don't error when imported outside of the test
+-- environment, since our package entry point requires JestGlobals eagerly
+-- error(Error.new(
+-- 	-- ROBLOX deviation START: aligned message to make sense for jest-roblox
+-- 	"Do not import `JestGlobals` outside of the Jest 3 test environment.\n"
+-- 		.. "Tip: Jest 2 uses a different pattern - check your Jest version."
+-- 	-- ROBLOX deviation END
+-- ))
 
 return ({} :: any) :: JestGlobals

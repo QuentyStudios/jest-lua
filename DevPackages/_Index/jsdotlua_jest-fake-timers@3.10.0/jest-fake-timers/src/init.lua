@@ -30,10 +30,13 @@ local realDateTime = DateTime
 local realOs = os
 local realTask = task
 
+local LOOP_LIMIT = 100000
+
 type Timeout = {
 	time: number,
-	callback: () -> (),
-	args: { any }
+	thread: thread,
+	delayArgs: { n: number, [number]: any }?,
+	waitStartTime: number?,
 }
 
 export type FakeTimers = {
@@ -57,7 +60,7 @@ export type FakeTimers = {
 	timeOverride: typeof(time),
 	dateTimeOverride: typeof(DateTime),
 	osOverride: typeof(os),
-	taskOverride: typeof(task)
+	taskOverride: typeof(task),
 }
 
 local FakeTimers = {}
@@ -122,6 +125,28 @@ function FakeTimers:_advanceToTime(time_): ()
 	end
 end
 
+local function fakeClock(self): number
+	return self._mockTimeMs / 1000
+end
+
+function FakeTimers:_resumeTimeout(timeout: Timeout): ()
+	local thread = timeout.thread
+	if coroutine.status(thread) ~= "suspended" then
+		return
+	end
+
+	local delayArgs = timeout.delayArgs
+	if delayArgs then
+		local success, callbackError = coroutine.resume(thread, table.unpack(delayArgs, 1, delayArgs.n))
+		if not success then
+			error(callbackError, 0)
+		end
+	else
+		local elapsedTime = fakeClock(self) - (timeout.waitStartTime :: number)
+		realTask.spawn(thread, elapsedTime)
+	end
+end
+
 function FakeTimers:clearAllTimers(): ()
 	if self._fakingTime then
 		self._timeouts = {}
@@ -132,11 +157,29 @@ function FakeTimers:dispose(): ()
 	self:useRealTimers()
 end
 
+function FakeTimers:_takeTimeoutDueBy(time_: number, timersRun: number): Timeout?
+	local timeout = self._timeouts[1]
+	if timeout == nil or timeout.time > time_ then
+		return nil
+	end
+
+	if timersRun >= LOOP_LIMIT then
+		error(string.format("Aborting after running %d timers, assuming an infinite loop!", LOOP_LIMIT))
+	end
+
+	table.remove(self._timeouts, 1)
+	return timeout
+end
+
 function FakeTimers:runAllTimers(): ()
 	if self:_checkFakeTimers() then
-		for _, timeout in self._timeouts do
+		local timersRun = 0
+		local timeout = self:_takeTimeoutDueBy(math.huge, timersRun)
+		while timeout do
 			self:_advanceToTime(timeout.time + self._engineFrameTime)
-			timeout.callback(unpack(timeout.args))
+			self:_resumeTimeout(timeout)
+			timersRun += 1
+			timeout = self:_takeTimeoutDueBy(math.huge, timersRun)
 		end
 	end
 	self._timeouts = {}
@@ -144,16 +187,14 @@ end
 
 function FakeTimers:runOnlyPendingTimers(): ()
 	if self:_checkFakeTimers() then
-		local pendingTimeouts = {}
-		for _, timeout in self._timeouts do
-			table.insert(pendingTimeouts, timeout)
-		end
-
-		-- Call all pending timeouts
-		self._timeouts = {}
+		local pendingTimeouts = table.clone(self._timeouts)
 		for _, timeout in pendingTimeouts do
-			self:_advanceToTime(timeout.time + self._engineFrameTime)
-			timeout.callback(unpack(timeout.args))
+			local queuedIndex = table.find(self._timeouts, timeout)
+			if queuedIndex then
+				table.remove(self._timeouts, queuedIndex)
+				self:_advanceToTime(timeout.time + self._engineFrameTime)
+				self:_resumeTimeout(timeout)
+			end
 		end
 	end
 end
@@ -163,25 +204,26 @@ function FakeTimers:advanceTimersToNextTimer(steps_: number?): ()
 	-- CLI-41847 is done
 	local steps: number = steps_ or 1
 	if self:_checkFakeTimers() then
-		local newTimeouts = {}
-		local nextTime = -1		
-for _, timeout in self._timeouts do
-			if timeout.time > nextTime and steps > 0 then
-				if self._engineFrameTime > 0 then
-					nextTime = math.floor((timeout.time / self._engineFrameTime) + 1) * self._engineFrameTime
-				else
-					nextTime = timeout.time
-				end
-				self:_advanceToTime(nextTime)
-				steps = steps - 1
+		local timersRun = 0
+		for _ = 1, steps do
+			local nextTimeout = self._timeouts[1]
+			if not nextTimeout then
+				break
 			end
-			if self._mockTimeMs >= timeout.time then
-				timeout.callback(unpack(timeout.args))
-			else
-				table.insert(newTimeouts, timeout)
+
+			local nextTime = nextTimeout.time
+			if self._engineFrameTime > 0 then
+				nextTime = math.floor((nextTime / self._engineFrameTime) + 1) * self._engineFrameTime
+			end
+			self:_advanceToTime(nextTime)
+
+			local timeout = self:_takeTimeoutDueBy(self._mockTimeMs, timersRun)
+			while timeout do
+				self:_resumeTimeout(timeout)
+				timersRun += 1
+				timeout = self:_takeTimeoutDueBy(self._mockTimeMs, timersRun)
 			end
 		end
-		self._timeouts = newTimeouts
 	end
 end
 
@@ -191,17 +233,16 @@ function FakeTimers:advanceTimersByTime(msToRun: number): ()
 		if self._engineFrameTime > 0 then
 			targetTime = (math.floor(targetTime / self._engineFrameTime) + 1) * self._engineFrameTime
 		end
-		local newTimeouts = {}
-		for _, timeout in self._timeouts do
-			if targetTime >= timeout.time then
-				self:_advanceToTime(timeout.time + self._engineFrameTime)
-				timeout.callback(unpack(timeout.args))
-			else
-				table.insert(newTimeouts, timeout)
-			end
+
+		local timersRun = 0
+		local timeout = self:_takeTimeoutDueBy(targetTime, timersRun)
+		while timeout do
+			self:_advanceToTime(timeout.time + self._engineFrameTime)
+			self:_resumeTimeout(timeout)
+			timersRun += 1
+			timeout = self:_takeTimeoutDueBy(targetTime, timersRun)
 		end
 		self:_advanceToTime(targetTime)
-		self._timeouts = newTimeouts
 	end
 end
 
@@ -226,49 +267,72 @@ function FakeTimers:useRealTimers(): ()
 	end
 end
 
-local function fakeClock(self): number
-	return self._mockTimeMs / 1000
+local function getTargetTime(self, delayTime: number?): number
+	-- Small hack to make sure 0 second recursive timers don't trigger twice in a single frame
+	local delayTimeMs = (self._engineFrameTime / 1000) + (delayTime or 0) * 1000
+	return self._mockTimeMs + delayTimeMs
 end
 
-local function fakeDelay(self, delayTime, callback, ...): Timeout
-	-- Small hack to make sure 0 second recursive timers don't trigger twice in a single frame
-	local delayTimeMs = (self._engineFrameTime / 1000) + delayTime * 1000
-	local targetTime = self._mockTimeMs + delayTimeMs
-	local timeout = {
-		time = targetTime,
-		callback = callback,
-		args = { ... },
-	}
+local function insertTimeout(self, timeout: Timeout): ()
 	local insertIndex = #self._timeouts + 1
 	for i, timeout_ in self._timeouts do
 		-- Timeouts are inserted in time order. As soon as we encounter a
 		-- timeout that's _after_ our targetTime, we place ours in the list
 		-- immediately before it. This way, timeouts with the exact same time
 		-- will be queued up in insertion order to break ties
-		if timeout_.time > targetTime then
+		if timeout_.time > timeout.time then
 			insertIndex = i
 			break
 		end
 	end
 	table.insert(self._timeouts, insertIndex, timeout)
-	return timeout
 end
 
-local function fakeCancel(self, timeout)
-	for i, timeout_ in self._timeouts do
-		if timeout_ == timeout then
+local function addTraceback(err: any): any
+	if type(err) == "string" then
+		return debug.traceback(err, 2)
+	end
+	return err
+end
+
+local function createCallbackThread(callback: (...any) -> ()): thread
+	return coroutine.create(function(...)
+		local success, callbackError = xpcall(callback, addTraceback, ...)
+		if not success then
+			error(callbackError, 0)
+		end
+	end)
+end
+
+local function fakeDelay(self, delayTime: number?, callback, ...): thread
+	local thread = if type(callback) == "thread" then callback else createCallbackThread(callback)
+	insertTimeout(self, {
+		time = getTargetTime(self, delayTime),
+		thread = thread,
+		delayArgs = table.pack(...),
+	})
+	return thread
+end
+
+local function removeTimeoutsForThread(self, thread: thread): ()
+	for i = #self._timeouts, 1, -1 do
+		if self._timeouts[i].thread == thread then
 			table.remove(self._timeouts, i)
-			break
 		end
 	end
 end
 
+local function fakeCancel(self, thread: thread): ()
+	removeTimeoutsForThread(self, thread)
+	realTask.cancel(thread)
+end
+
 local function fakeWait(self, timeToWait: number?)
-	local running = coroutine.running()
-	local clock = fakeClock(self)
-	fakeDelay(self, timeToWait or 0, function()
-		task.spawn(running, fakeClock(self) - clock)
-	end)
+	insertTimeout(self, {
+		time = getTargetTime(self, timeToWait),
+		thread = coroutine.running(),
+		waitStartTime = fakeClock(self),
+	})
 	return coroutine.yield()
 end
 
@@ -313,8 +377,8 @@ function FakeTimers:useFakeTimers(): ()
 			return fakeDelay(self, delayTime, callback, ...)
 		end)
 
-		self.taskOverride.cancel.mockImplementation(function(timeout)
-			fakeCancel(self, timeout)
+		self.taskOverride.cancel.mockImplementation(function(thread)
+			fakeCancel(self, thread)
 		end)
 
 		self.taskOverride.wait.mockImplementation(function(timeToWait)
@@ -380,9 +444,9 @@ end
 function FakeTimers:_checkFakeTimers()
 	if not self._fakingTime then
 		error(
-[[A function to advance timers was called but the timers API is not mocked with fake timers. Call `jest.useFakeTimers()` in this test.]]		
-
-)
+			"A function to advance timers was called but the timers API is not "
+				.. "mocked with fake timers. Call `jest.useFakeTimers()` in this test."
+		)
 	end
 
 	return self._fakingTime
