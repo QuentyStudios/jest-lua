@@ -21,15 +21,12 @@ return (function()
 	local expect = JestGlobals.expect
 	local test = JestGlobals.test
 
-	test("throw when directly imported", function()
+	-- quentystudios deviation: importing JestGlobals directly doesn't throw,
+	-- since our package entry point requires it eagerly
+	test("does not throw when directly imported", function()
 		expect(function()
 			require("../index")
-		end).toThrowError(
-			-- ROBLOX deviation START: aligned message to make sense for jest-roblox
-			"Do not import `JestGlobals` outside of the Jest 3 test environment.\n"
-				.. "Tip: Jest 2 uses a different pattern - check your Jest version."
-			-- ROBLOX deviation END
-		)
+		end).never.toThrow()
 	end)
 
 	return {}
